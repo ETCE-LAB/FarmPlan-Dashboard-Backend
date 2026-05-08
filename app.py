@@ -3,7 +3,6 @@ import os
 import re
 from pathlib import Path
 from statistics import mean
-
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
