@@ -12,7 +12,7 @@ from pymongo import MongoClient, UpdateOne
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_CSV_PATH = BASE_DIR.parent / "20260320_Neorx-treeline-planning.csv"
+DEFAULT_CSV_PATH = BASE_DIR / "20260320_Neorx-treeline-planning.csv"
 
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "farmplan")
@@ -286,23 +286,16 @@ def get_treeline_records():
         page = min(page, total_pages)
         skip = (page - 1) * limit
 
-        projection = {
-            "_id": 0,
-            "source_id": 1,
-            "german_name": 1,
-            "english_name": 1,
-            "strata": 1,
-            "category": 1,
-            "hardiness_zones": 1,
-            "typical_share": 1,
-        }
+        # CHANGED: Replaced the strict projection with a simple {"_id": 0}
+        # This ensures ALL CSV data (including sources and purposes) is sent to the frontend
         raw_rows = list(
-            collection.find(query, projection)
+            collection.find(query, {"_id": 0})
             .sort("source_id", 1)
             .skip(skip)
             .limit(limit)
         )
 
+        # CHANGED: Added 'calories' and 'rawDetails' to the response mapped to the frontend
         rows = [
             {
                 "id": row.get("source_id"),
@@ -312,6 +305,8 @@ def get_treeline_records():
                 "typicalShare": row.get("typical_share") or "n/a",
                 "hardiness": row.get("hardiness_zones") or "n/a",
                 "category": row.get("category") or "n/a",
+                "calories": row.get("expected_calories_mid") or 0,
+                "rawDetails": row  # Passes the entire dictionary to the React app
             }
             for row in raw_rows
         ]
