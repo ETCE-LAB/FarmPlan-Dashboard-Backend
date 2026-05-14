@@ -48,7 +48,6 @@ def parse_range_midpoint(value: str):
 def split_zones(value: str):
     if not value:
         return []
-
     return [zone.strip() for zone in value.split(";") if zone.strip()]
 
 
@@ -233,7 +232,7 @@ def import_treeline_csv():
                 "csvPath": str(csv_path),
             }
         )
-    except Exception as error:  # pragma: no cover - defensive endpoint guard
+    except Exception as error:
         return jsonify({"status": "error", "error": str(error)}), 500
     finally:
         client.close()
@@ -248,7 +247,7 @@ def get_treeline_overview():
 
         payload = build_overview_payload(collection)
         return jsonify(payload)
-    except Exception as error:  # pragma: no cover - defensive endpoint guard
+    except Exception as error:
         return jsonify({"status": "error", "error": str(error)}), 500
     finally:
         client.close()
@@ -261,12 +260,16 @@ def get_treeline_records():
     search = (request.args.get("search") or "").strip()
     category = (request.args.get("category") or "all").strip()
     strata = (request.args.get("strata") or "all").strip()
+    hardiness = (request.args.get("hardiness") or "all").strip() # Added hardiness
 
     query = {}
     if category and category.lower() != "all":
         query["category"] = category
     if strata and strata.lower() != "all":
         query["strata"] = strata
+    if hardiness and hardiness.lower() != "all":
+        query["hardiness_zone_list"] = hardiness # Added hardiness filter
+        
     if search:
         query["$or"] = [
             {"source_id": {"$regex": search, "$options": "i"}},
@@ -285,8 +288,6 @@ def get_treeline_records():
         page = min(page, total_pages)
         skip = (page - 1) * limit
 
-        # CHANGED: Replaced the strict projection with a simple {"_id": 0}
-        # This ensures ALL CSV data (including sources and purposes) is sent to the frontend
         raw_rows = list(
             collection.find(query, {"_id": 0})
             .sort("source_id", 1)
@@ -294,7 +295,6 @@ def get_treeline_records():
             .limit(limit)
         )
 
-        # CHANGED: Added 'calories' and 'rawDetails' to the response mapped to the frontend
         rows = [
             {
                 "id": row.get("source_id"),
@@ -305,15 +305,14 @@ def get_treeline_records():
                 "hardiness": row.get("hardiness_zones") or "n/a",
                 "category": row.get("category") or "n/a",
                 "calories": row.get("expected_calories_mid") or 0,
-                "rawDetails": row  # Passes the entire dictionary to the React app
+                "rawDetails": row  
             }
             for row in raw_rows
         ]
 
-        categories = sorted(
-            [item for item in collection.distinct("category") if item]
-        )
+        categories = sorted([item for item in collection.distinct("category") if item])
         strata_options = sorted([item for item in collection.distinct("strata") if item])
+        hardiness_options = sorted([item for item in collection.distinct("hardiness_zone_list") if item])
 
         return jsonify(
             {
@@ -330,14 +329,16 @@ def get_treeline_records():
                     "search": search,
                     "category": category,
                     "strata": strata,
+                    "hardiness": hardiness,
                 },
                 "options": {
                     "categories": categories,
                     "strata": strata_options,
+                    "hardinessZones": hardiness_options,
                 },
             }
         )
-    except Exception as error:  # pragma: no cover - defensive endpoint guard
+    except Exception as error: 
         return jsonify({"status": "error", "error": str(error)}), 500
     finally:
         client.close()
