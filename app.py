@@ -1,6 +1,7 @@
 import csv
 import os
 import re
+import urllib.parse
 from pathlib import Path
 from statistics import mean
 from dotenv import load_dotenv
@@ -8,14 +9,28 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from pymongo import MongoClient, UpdateOne
 
+# Load environment variables from .env file (if present)
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV_PATH = BASE_DIR / "20260320_Neorx-treeline-planning.csv"
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+# --- START DEPLOYMENT DATABASE CONFIG ---
+MONGO_USERNAME = os.getenv("MONGO_USERNAME")
+MONGO_PASSWORD = os.getenv("MONGO_PASSWORD")
+MONGO_CLUSTER = os.getenv("MONGO_CLUSTER", "localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "farmplan")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "treeline_planning")
+
+# Automatically build the connection string if credentials are provided
+if MONGO_USERNAME and MONGO_PASSWORD:
+    encoded_pass = urllib.parse.quote_plus(MONGO_PASSWORD)
+    MONGO_URI = f"mongodb+srv://{MONGO_USERNAME}:{encoded_pass}@{MONGO_CLUSTER}/?retryWrites=true&w=majority"
+else:
+    # Fallback for your local development
+    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+# --- END DEPLOYMENT DATABASE CONFIG ---
+
 TREELINE_CSV_PATH = Path(os.getenv("TREELINE_CSV_PATH", str(DEFAULT_CSV_PATH))).resolve()
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 
@@ -260,7 +275,7 @@ def get_treeline_records():
     search = (request.args.get("search") or "").strip()
     category = (request.args.get("category") or "all").strip()
     strata = (request.args.get("strata") or "all").strip()
-    hardiness = (request.args.get("hardiness") or "all").strip() # Added hardiness
+    hardiness = (request.args.get("hardiness") or "all").strip() 
 
     query = {}
     if category and category.lower() != "all":
@@ -268,7 +283,7 @@ def get_treeline_records():
     if strata and strata.lower() != "all":
         query["strata"] = strata
     if hardiness and hardiness.lower() != "all":
-        query["hardiness_zone_list"] = hardiness # Added hardiness filter
+        query["hardiness_zone_list"] = hardiness 
         
     if search:
         query["$or"] = [
