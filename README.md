@@ -8,6 +8,7 @@ This folder contains the Flask backend for the FarmPlan dashboard. It reads the 
 - imports the CSV into MongoDB with `/api/treeline/import`
 - returns dashboard summary data with `/api/treeline/overview`
 - returns paginated plant records with `/api/treeline/records`
+- returns hardineszone for a field `/api/hardiness/field`
 - automatically imports the CSV if the database is still empty
 
 ## What you need
@@ -15,6 +16,7 @@ This folder contains the Flask backend for the FarmPlan dashboard. It reads the 
 - Python 3.10 or newer
 - MongoDB running locally or through `MONGO_URI`
 - the CSV file `20260320_Neorx-treeline-planning.csv` in this folder
+- the GeoTIFF hardiness raster `hardiness_zones_1990_2024_every_2y.tif`
 
 ## Setup
 
@@ -34,6 +36,7 @@ The backend uses these environment variables:
 - `MONGO_DB` - Database name. Default is `farmplan`
 - `MONGO_COLLECTION` - Collection name. Default is `treeline_planning`
 - `TREELINE_CSV_PATH` - Path to the CSV file used for imports. Default is `20260320_Neorx-treeline-planning.csv`
+- `HARDINESS_RASTER_PATH` - Path to the GeoTIFF hardiness raster. Default is `hardiness_zones_1990_2024_every_2y.tif`
 - `FLASK_PORT` - Port for the Flask server. Default is `5000`
 
 If you want different values, create a `.env` file in this folder.
@@ -45,6 +48,8 @@ MONGO_URI=mongodb+srv://farmplan_Demo:s9DpySkryHGHl0yR@cluster0.ihcfaul.mongodb.
 MONGO_DB=farmplan
 MONGO_COLLECTION=treeline_planning
 TREELINE_CSV_PATH=20260320_Neorx-treeline-planning.csv
+FLASK_PORT=5000
+HARDINESS_RASTER_PATH=hardiness_zones_1990_2024_every_2y.tif
 FLASK_PORT=5000
 ```
 
@@ -100,11 +105,68 @@ Example:
 curl "http://localhost:5000/api/treeline/records?page=1&limit=10&search=oak"
 ```
 
+### `POST /api/hardiness/field`
+
+Analyzes a field polygon against the hardiness GeoTIFF raster and returns hardiness zone information.
+
+The endpoint:
+
+* clips the raster to the submitted polygon
+* calculates zone distribution percentages
+* returns the dominant hardiness zone
+* also give the temperature range for dominant zone
+* reports in howmany rasters(km²) it intersects
+
+## Request Body
+
+The polygon must contain at least **3 coordinates**.
+
+Coordinates must be provided in:
+
+```text
+[latitude, longitude]
+```
+
+## Example Request
+
+```bash
+curl -X POST http://localhost:5000/api/hardiness/field \
+-H "Content-Type: application/json" \
+-d '{
+  "polygon": [
+    [50.766359, 11.077382],
+    [50.940246, 10.703823],
+    [52.5180, 13.4150],
+  ]
+}'
+```
+
+## Example Response
+
+```json
+{
+  "status": "ok",
+  "distribution": {
+    "7a": 38.01,
+    "7b": 61.99
+  },
+  "dominantZone": "7b",
+  "rawPixelCount": 3389,
+  "temperature": [
+    -15.0,
+    -12.2
+  ]
+}
+```
+
+
 ## Data notes
 
 - CSV headers are changed to lowercase snake_case before they go into MongoDB.
 - Derived fields include `source_id`, `end_height_mid_m`, `lifespan_mid_years`, `expected_calories_mid`, `typical_share_mid_pct`, `hardiness_zone_list`, and `hardiness_zone_count`.
 - If the collection is empty, the backend imports the default CSV the first time overview or records are requested.
+
+- Source and creation of GeoTIFF data is lsited in DATALICENS&ATRIBUTTION.md
 
 ## Frontend use
 
