@@ -1,6 +1,7 @@
 import csv
 import os
 import re
+import urllib.parse
 from pathlib import Path
 from statistics import mean
 from dotenv import load_dotenv
@@ -15,11 +16,26 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV_PATH = BASE_DIR / "20260320_Neorx-treeline-planning.csv"
+DEFAULT_HARDINESS_PATH = BASE_DIR / "hardiness_zones_1990_2024_every_2y.tif"
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+# --- START DEPLOYMENT DATABASE CONFIG ---
+MONGO_USERNAME = os.getenv("MONGO_USERNAME")
+MONGO_PASSWORD = os.getenv("MONGO_PASSWORD")
+MONGO_CLUSTER = os.getenv("MONGO_CLUSTER", "localhost:27017")
 MONGO_DB = os.getenv("MONGO_DB", "farmplan")
 MONGO_COLLECTION = os.getenv("MONGO_COLLECTION", "treeline_planning")
+
+# Automatically build the connection string if credentials are provided
+if MONGO_USERNAME and MONGO_PASSWORD:
+    encoded_pass = urllib.parse.quote_plus(MONGO_PASSWORD)
+    MONGO_URI = f"mongodb+srv://{MONGO_USERNAME}:{encoded_pass}@{MONGO_CLUSTER}/?retryWrites=true&w=majority"
+else:
+    # Fallback for your local development
+    MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+# --- END DEPLOYMENT DATABASE CONFIG ---
+
 TREELINE_CSV_PATH = Path(os.getenv("TREELINE_CSV_PATH", str(DEFAULT_CSV_PATH))).resolve()
+HARDINESS_RASTER_PATH = Path(os.getenv("HARDINESS_RASTER_PATH", str(DEFAULT_HARDINESS_PATH))).resolve()
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 
 from plant_images import plant_images_bp
@@ -89,6 +105,36 @@ auto_seed_images()
 
 
 
+
+INT_TO_ZONE = {
+    0: "<6a",
+    1: "6a",
+    2: "6b",
+    3: "7a",
+    4: "7b",
+    5: "8a",
+    6: "8b",
+    7: "9a",
+    8: "9b",
+    9: ">9b"
+}
+
+ZONE_TO_TMP = {
+    "<6a": (-53.9, -23.3),
+    "6a": (23.3, -20.6),
+    "6b": (-20.6, -17.8),
+    "7a": (17.8, -15.0),
+    "7b": (-15.0, -12.2),
+    "8a": (-12.2, -9.4),
+    "8b": (-9.4, -6.7),
+    "9a": (-6.7, -3.9),
+    "9b": (-3.9, -1.1),
+    ">9b": (-1.1, 21.1)
+}
+
+
+
+
 def normalize_key(key: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", key.strip().lower())
     return cleaned.strip("_")
@@ -114,7 +160,6 @@ def parse_range_midpoint(value: str):
 def split_zones(value: str):
     if not value:
         return []
-
     return [zone.strip() for zone in value.split(";") if zone.strip()]
 
 
@@ -131,6 +176,77 @@ def parse_int(value, default, min_value=None, max_value=None):
 
     return parsed
 
+def get_hardiness_polygon(polygon_coords):
+
+    if not polygon_coords or len(polygon_coords) < 3:
+        raise ValueError("Polygon must contain at least 3 coordinates")
+
+    polygon_lonlat = [
+        (lng, lat)
+        for lat, lng in polygon_coords
+    ]
+
+    polygon = make_valid(Polygon(polygon_lonlat))
+
+    with rasterio.open(HARDINESS_RASTER_PATH) as src:
+        out_image, _ = mask(
+            src,
+            [polygon],
+            crop=True,
+            all_touched=True
+        )
+
+        data = out_image[0]
+
+        valid = (
+            data[data != src.nodata]
+            if src.nodata is not None
+            else data[data >= 0]
+        )
+
+        if len(valid) == 0:
+            return {
+                "dominantZone": None,
+                "distribution": {},
+                "rawPixelCount": None,
+                "temperature": None
+            }
+        
+        raw_pixel_count = len(valid)
+
+        values, counts = np.unique(
+            valid,
+            return_counts=True
+        )
+
+        total = counts.sum()
+
+        distribution = {}
+
+        for value, count in zip(values, counts):
+            zone = INT_TO_ZONE.get(
+                int(value),
+                f"unknown({int(value)})"
+            )
+
+            distribution[zone] = round(
+                (count / total) * 100,
+                2
+            )
+
+        dominant_zone = max(
+            distribution,
+            key=distribution.get
+        )
+
+        temperature = ZONE_TO_TMP.get(dominant_zone)
+
+        return {
+            "dominantZone": dominant_zone,
+            "distribution": distribution,
+            "rawPixelCount": raw_pixel_count,
+            "temperature": temperature
+        }
 
 def to_document(row: dict):
     doc = {}
@@ -299,7 +415,7 @@ def import_treeline_csv():
                 "csvPath": str(csv_path),
             }
         )
-    except Exception as error:  # pragma: no cover - defensive endpoint guard
+    except Exception as error:
         return jsonify({"status": "error", "error": str(error)}), 500
     finally:
         client.close()
@@ -314,7 +430,7 @@ def get_treeline_overview():
 
         payload = build_overview_payload(collection)
         return jsonify(payload)
-    except Exception as error:  # pragma: no cover - defensive endpoint guard
+    except Exception as error:
         return jsonify({"status": "error", "error": str(error)}), 500
     finally:
         client.close()
@@ -327,12 +443,16 @@ def get_treeline_records():
     search = (request.args.get("search") or "").strip()
     category = (request.args.get("category") or "all").strip()
     strata = (request.args.get("strata") or "all").strip()
+    hardiness = (request.args.get("hardiness") or "all").strip() 
 
     query = {}
     if category and category.lower() != "all":
         query["category"] = category
     if strata and strata.lower() != "all":
         query["strata"] = strata
+    if hardiness and hardiness.lower() != "all":
+        query["hardiness_zone_list"] = hardiness 
+        
     if search:
         query["$or"] = [
             {"source_id": {"$regex": search, "$options": "i"}},
@@ -351,8 +471,6 @@ def get_treeline_records():
         page = min(page, total_pages)
         skip = (page - 1) * limit
 
-        # CHANGED: Replaced the strict projection with a simple {"_id": 0}
-        # This ensures ALL CSV data (including sources and purposes) is sent to the frontend
         raw_rows = list(
             collection.find(query, {"_id": 0})
             .sort("source_id", 1)
@@ -360,7 +478,6 @@ def get_treeline_records():
             .limit(limit)
         )
 
-        # CHANGED: Added 'calories' and 'rawDetails' to the response mapped to the frontend
         rows = [
             {
                 "id": row.get("source_id"),
@@ -371,15 +488,14 @@ def get_treeline_records():
                 "hardiness": row.get("hardiness_zones") or "n/a",
                 "category": row.get("category") or "n/a",
                 "calories": row.get("expected_calories_mid") or 0,
-                "rawDetails": row  # Passes the entire dictionary to the React app
+                "rawDetails": row  
             }
             for row in raw_rows
         ]
 
-        categories = sorted(
-            [item for item in collection.distinct("category") if item]
-        )
+        categories = sorted([item for item in collection.distinct("category") if item])
         strata_options = sorted([item for item in collection.distinct("strata") if item])
+        hardiness_options = sorted([item for item in collection.distinct("hardiness_zone_list") if item])
 
         return jsonify(
             {
@@ -396,14 +512,16 @@ def get_treeline_records():
                     "search": search,
                     "category": category,
                     "strata": strata,
+                    "hardiness": hardiness,
                 },
                 "options": {
                     "categories": categories,
                     "strata": strata_options,
+                    "hardinessZones": hardiness_options,
                 },
             }
         )
-    except Exception as error:  # pragma: no cover - defensive endpoint guard
+    except Exception as error: 
         return jsonify({"status": "error", "error": str(error)}), 500
     finally:
         client.close()
