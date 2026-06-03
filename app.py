@@ -9,15 +9,9 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from pymongo import MongoClient, UpdateOne
 
-import numpy as np
-import rasterio
-
-from shapely.geometry import Polygon
-from shapely.validation import make_valid
-from rasterio.mask import mask
 
 
-# Load environment variables from .env file (if present)
+
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -44,8 +38,71 @@ TREELINE_CSV_PATH = Path(os.getenv("TREELINE_CSV_PATH", str(DEFAULT_CSV_PATH))).
 HARDINESS_RASTER_PATH = Path(os.getenv("HARDINESS_RASTER_PATH", str(DEFAULT_HARDINESS_PATH))).resolve()
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 
+from plant_images import plant_images_bp
+
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}})
+app.register_blueprint(plant_images_bp)
+
+
+
+import numpy as np
+import rasterio
+from shapely.geometry import Polygon
+from shapely.validation import make_valid
+from rasterio.mask import mask
+
+DEFAULT_HARDINESS_PATH = BASE_DIR / "hardiness_zones_1990_2024_every_2y.tif"
+HARDINESS_RASTER_PATH = Path(os.getenv("HARDINESS_RASTER_PATH", str(DEFAULT_HARDINESS_PATH))).resolve()
+
+INT_TO_ZONE = {0:"<6a",1:"6a",2:"6b",3:"7a",4:"7b",5:"8a",6:"8b",7:"9a",8:"9b",9:">9b"}
+ZONE_TO_TMP = {"<6a":(-53.9,-23.3),"6a":(-23.3,-20.6),"6b":(-20.6,-17.8),"7a":(-17.8,-15.0),"7b":(-15.0,-12.2),"8a":(-12.2,-9.4),"8b":(-9.4,-6.7),"9a":(-6.7,-3.9),"9b":(-3.9,-1.1),">9b":(-1.1,21.1)}
+
+def get_hardiness_polygon(polygon_coords):
+    if not polygon_coords or len(polygon_coords) < 3:
+        raise ValueError("Polygon must contain at least 3 coordinates")
+    polygon_lonlat = [(lng, lat) for lat, lng in polygon_coords]
+    polygon = make_valid(Polygon(polygon_lonlat))
+    with rasterio.open(HARDINESS_RASTER_PATH) as src:
+        out_image, _ = mask(src, [polygon], crop=True, all_touched=True)
+        data = out_image[0]
+        valid = data[data != src.nodata] if src.nodata is not None else data[data >= 0]
+        if len(valid) == 0:
+            return {"dominantZone": None, "distribution": {}, "rawPixelCount": None, "temperature": None}
+        raw_pixel_count = len(valid)
+        values, counts = np.unique(valid, return_counts=True)
+        total = counts.sum()
+        distribution = {}
+        for value, count in zip(values, counts):
+            zone = INT_TO_ZONE.get(int(value), f"unknown({int(value)})")
+            distribution[zone] = round((count / total) * 100, 2)
+        dominant_zone = max(distribution, key=distribution.get)
+        temperature = ZONE_TO_TMP.get(dominant_zone)
+        return {"dominantZone": dominant_zone, "distribution": distribution, "rawPixelCount": raw_pixel_count, "temperature": temperature}
+
+def auto_seed_images():
+    try:
+        client = MongoClient(MONGO_URI)
+        col = client[MONGO_DB]["plant_images"]
+        if col.count_documents({}) == 0:
+            from plant_images import SEED_IMAGES
+            ops = [UpdateOne({"source_id": r["source_id"]}, {"$set": r}, upsert=True)
+                   for r in SEED_IMAGES if r.get("source_id")]
+            if ops:
+                result = col.bulk_write(ops, ordered=False)
+                print(f"[AUTO-SEED] Seeded {result.upserted_count} plant images")
+        else:
+            print("[AUTO-SEED] Plant images collection already exists, skipping")
+        client.close()
+    except Exception as e:
+        error_msg = str(e)
+        if "not authorized" in error_msg or "bad auth" in error_msg:
+            print("[AUTO-SEED] Read-only connection, skipping seed")
+        else:
+            print(f"[AUTO-SEED] Warning: {e}")
+
+auto_seed_images()
+
 
 
 
@@ -468,42 +525,19 @@ def get_treeline_records():
         return jsonify({"status": "error", "error": str(error)}), 500
     finally:
         client.close()
-
 @app.post("/api/hardiness/field")
 def get_field_hardiness():
     payload = request.get_json(silent=True) or {}
-
     polygon = payload.get("polygon")
-
-    #-----Basic validation
-
     if not polygon or not isinstance(polygon, list):
-        return jsonify({
-            "status": "error",
-            "error": "polygon is required and must be a list"
-    }), 400
-
+        return jsonify({"status": "error", "error": "polygon is required and must be a list"}), 400
     if len(polygon) < 3:
-        return jsonify({
-        "status": "error",
-        "error": "polygon must have at least 3 points"
-    }), 400
-    #----
-
+        return jsonify({"status": "error", "error": "polygon must have at least 3 points"}), 400
     try:
         result = get_hardiness_polygon(polygon)
-
-        return jsonify({
-            "status": "ok",
-            **result
-        })
-
+        return jsonify({"status": "ok", **result})
     except Exception as error:
-        return jsonify({
-            "status": "error",
-            "error": str(error)
-        }), 500
-
+        return jsonify({"status": "error", "error": str(error)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=FLASK_PORT, debug=True)
