@@ -32,7 +32,7 @@ pip install -r requirements.txt
 
 The backend uses these environment variables:
 
-- `MONGO_URI` - MongoDB connection string. Default is `mongodb+srv://farmplan_Demo:s9DpySkryHGHl0yR@cluster0.ihcfaul.mongodb.net/`
+- `MONGO_URI` - MongoDB connection string. Default is `mongodb://localhost:2701`
 - `MONGO_DB` - Database name. Default is `farmplan`
 - `MONGO_COLLECTION` - Collection name. Default is `treeline_planning`
 - `TREELINE_CSV_PATH` - Path to the CSV file used for imports. Default is `20260320_Neorx-treeline-planning.csv`
@@ -44,7 +44,7 @@ If you want different values, create a `.env` file in this folder.
 Example:
 
 ```env
-MONGO_URI=mongodb+srv://farmplan_Demo:s9DpySkryHGHl0yR@cluster0.ihcfaul.mongodb.net/
+MONGO_URI=mongodb://localhost:2701
 MONGO_DB=farmplan
 MONGO_COLLECTION=treeline_planning
 TREELINE_CSV_PATH=20260320_Neorx-treeline-planning.csv
