@@ -10,7 +10,7 @@ from flask_cors import CORS
 from pymongo import MongoClient, UpdateOne
 
 # Load environment variables from .env file (if present)
-load_dotenv()
+load_dotenv("environment/.env")
 
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_CSV_PATH = BASE_DIR / "20260320_Neorx-treeline-planning.csv"
@@ -31,7 +31,9 @@ else:
     MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 # --- END DEPLOYMENT DATABASE CONFIG ---
 
-TREELINE_CSV_PATH = Path(os.getenv("TREELINE_CSV_PATH", str(DEFAULT_CSV_PATH))).resolve()
+TREELINE_CSV_PATH = Path(
+    os.getenv("TREELINE_CSV_PATH", str(DEFAULT_CSV_PATH))
+).resolve()
 FLASK_PORT = int(os.getenv("FLASK_PORT", "5000"))
 
 app = Flask(__name__)
@@ -173,8 +175,16 @@ def build_overview_payload(collection):
         {zone for row in rows for zone in split_zones(row.get("hardiness_zones", ""))}
     )
 
-    heights = [row["end_height_mid_m"] for row in rows if row.get("end_height_mid_m") is not None]
-    calories = [row["expected_calories_mid"] for row in rows if row.get("expected_calories_mid") is not None]
+    heights = [
+        row["end_height_mid_m"]
+        for row in rows
+        if row.get("end_height_mid_m") is not None
+    ]
+    calories = [
+        row["expected_calories_mid"]
+        for row in rows
+        if row.get("expected_calories_mid") is not None
+    ]
 
     avg_height = round(mean(heights), 2) if heights else 0
     avg_calories = round(mean(calories), 0) if calories else 0
@@ -271,11 +281,13 @@ def get_treeline_overview():
 @app.get("/api/treeline/records")
 def get_treeline_records():
     page = parse_int(request.args.get("page", 1), default=1, min_value=1)
-    limit = parse_int(request.args.get("limit", 10), default=10, min_value=1, max_value=100)
+    limit = parse_int(
+        request.args.get("limit", 10), default=10, min_value=1, max_value=100
+    )
     search = (request.args.get("search") or "").strip()
     category = (request.args.get("category") or "all").strip()
     strata = (request.args.get("strata") or "all").strip()
-    hardiness = (request.args.get("hardiness") or "all").strip() 
+    hardiness = (request.args.get("hardiness") or "all").strip()
 
     query = {}
     if category and category.lower() != "all":
@@ -283,8 +295,8 @@ def get_treeline_records():
     if strata and strata.lower() != "all":
         query["strata"] = strata
     if hardiness and hardiness.lower() != "all":
-        query["hardiness_zone_list"] = hardiness 
-        
+        query["hardiness_zone_list"] = hardiness
+
     if search:
         query["$or"] = [
             {"source_id": {"$regex": search, "$options": "i"}},
@@ -320,14 +332,18 @@ def get_treeline_records():
                 "hardiness": row.get("hardiness_zones") or "n/a",
                 "category": row.get("category") or "n/a",
                 "calories": row.get("expected_calories_mid") or 0,
-                "rawDetails": row  
+                "rawDetails": row,
             }
             for row in raw_rows
         ]
 
         categories = sorted([item for item in collection.distinct("category") if item])
-        strata_options = sorted([item for item in collection.distinct("strata") if item])
-        hardiness_options = sorted([item for item in collection.distinct("hardiness_zone_list") if item])
+        strata_options = sorted(
+            [item for item in collection.distinct("strata") if item]
+        )
+        hardiness_options = sorted(
+            [item for item in collection.distinct("hardiness_zone_list") if item]
+        )
 
         return jsonify(
             {
@@ -353,7 +369,7 @@ def get_treeline_records():
                 },
             }
         )
-    except Exception as error: 
+    except Exception as error:
         return jsonify({"status": "error", "error": str(error)}), 500
     finally:
         client.close()
