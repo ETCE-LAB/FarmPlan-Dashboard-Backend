@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: farmplan-env
-data:
-  .env: |
-       stuff
