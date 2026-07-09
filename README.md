@@ -58,6 +58,57 @@ python app.py
 
 The server listens on `0.0.0.0` and uses the port from the config.
 
+# Production Deployment (Docker & CI/CD)
+
+The application is fully configured for production deployment using Docker and runtime configuration.
+
+
+## 1. Backend Deployment (Docker)
+
+The backend is containerized via Docker and requires system dependencies (like `libexpat1` for `rasterio`) which are pre-configured in the Dockerfile.
+
+Ensure your server `.env` file is populated with production values:
+
+```env
+MONGO_URI=mongodb+srv://<user>:<password>@cluster.mongodb.net
+FLASK_PORT=5000
+FLASK_ENV=production
+```
+
+Build the Docker image:
+
+```bash
+docker build -t farmplan-dashboard-backend:latest .
+```
+
+Run the container:
+
+```bash
+docker run -p 5000:5000 --env-file .env farmplan-dashboard-backend:latest
+```
+
+## 2. Frontend Deployment (Runtime Configuration)
+
+The frontend uses a dynamic runtime configuration pattern. This means the server administrator can change the backend API URL without needing to rebuild the React application.
+
+Build the production assets:
+
+```bash
+npm run build
+```
+
+On your live server, locate the `dist/config.js` file.
+
+Edit the file to point to your live Python backend:
+
+```javascript
+window.FARM_PLAN_CONFIG = {
+  API_BASE_URL: "https://your-production-api-url.com"
+};
+```
+
+The frontend will instantly begin routing traffic to the new URL.
+
 ## API Endpoints
 
 ### `GET /api/health`
